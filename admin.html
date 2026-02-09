@@ -1,0 +1,85 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin • Primal Live</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div></div>
+  <div class="row"><a class="btn" href="/">Home</a></div>
+</div></div>
+
+<div class="container">
+  <h2>Admin Panel</h2>
+  <div id="gate" class="card" style="display:none;"><div class="card-body">
+    <h3 style="margin:0 0 6px;">Admin access required</h3>
+    <div class="muted">Promote yourself using <code>node tools/make-admin.js your@email.com</code></div>
+  </div></div>
+
+  <div id="ui" style="display:none;">
+    <div class="card"><div class="card-body">
+      <h3 style="margin:0 0 12px;">Users</h3>
+      <table class="table" id="users"></table>
+    </div></div>
+    <div style="height:12px"></div>
+    <div class="card"><div class="card-body">
+      <h3 style="margin:0 0 12px;">Streams</h3>
+      <table class="table" id="streams"></table>
+    </div></div>
+  </div>
+</div>
+
+<script type="module">
+import { api, qs, el } from '/common.js';
+
+async function load(){
+  const me = (await api('/api/me',{method:'GET'})).user;
+  if(!me){ location.href='/login.html'; return; }
+  if(me.role!=='ADMIN'){ qs('#gate').style.display='block'; return; }
+  qs('#ui').style.display='block';
+
+  const u = await api('/api/admin/users',{method:'GET'});
+  const ut = qs('#users');
+  ut.innerHTML = '<tr><th>Email</th><th>Username</th><th>Role</th><th>Action</th></tr>';
+  u.users.forEach(user=>{
+    const sel = el('select',{class:'input', style:'padding:6px 10px;'},[]);
+    ['VIEWER','CREATOR','ADMIN'].forEach(r=>{
+      const o = el('option',{},[r]);
+      if(r===user.role) o.selected=true;
+      sel.appendChild(o);
+    });
+    const btn = el('button',{class:'btn'},['Save']);
+    btn.onclick = async ()=>{
+      await api(`/api/admin/users/${user.id}/role`, { method:'POST', body: JSON.stringify({role: sel.value}) });
+      load();
+    };
+    const tr = document.createElement('tr');
+    tr.appendChild(el('td',{},[user.email]));
+    tr.appendChild(el('td',{},[user.username]));
+    const tdRole=document.createElement('td'); tdRole.appendChild(sel); tr.appendChild(tdRole);
+    const tdA=document.createElement('td'); tdA.appendChild(btn); tr.appendChild(tdA);
+    ut.appendChild(tr);
+  });
+
+  const s = await api('/api/admin/streams',{method:'GET'});
+  const st = qs('#streams');
+  st.innerHTML = '<tr><th>Title</th><th>Creator</th><th>Type</th><th>Live</th><th>Viewers</th><th>Action</th></tr>';
+  s.streams.forEach(stream=>{
+    const btn = el('button',{class:'btn danger'},['Force End']);
+    btn.onclick = async ()=>{
+      if(!confirm('Force end this stream?')) return;
+      await api(`/api/admin/streams/${stream.id}/force-end`, { method:'POST', body: JSON.stringify({}) });
+      load();
+    };
+    const tr=document.createElement('tr');
+    tr.appendChild(el('td',{},[stream.title]));
+    tr.appendChild(el('td',{},[stream.creatorUsername]));
+    tr.appendChild(el('td',{},[stream.ingestType]));
+    tr.appendChild(el('td',{},[stream.isLive ? 'YES' : 'NO']));
+    tr.appendChild(el('td',{},[String(stream.viewerCount)]));
+    const td=document.createElement('td'); td.appendChild(btn); tr.appendChild(td);
+    st.appendChild(tr);
+  });
+}
+load();
+</script>
+</body></html>

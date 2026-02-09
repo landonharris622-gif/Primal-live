@@ -1,0 +1,62 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Primal Live 🦍</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div><div class="pill" id="liveCount">LIVE: 0</div></div>
+  <div class="row">
+    <a class="btn" href="/vods.html">VOD</a>
+    <a class="btn" href="/creator.html">Creator</a>
+    <a class="btn" href="/admin.html">Admin</a>
+    <a class="btn" id="authBtn" href="/login.html">Login</a>
+  </div>
+</div></div>
+
+<div class="container">
+  <h2>Live Right Now</h2>
+  <div id="empty" class="card" style="display:none;"><div class="card-body">
+    <h3 style="margin:0 0 6px;">No one is live right now.</h3>
+    <div class="muted">Check back soon or start the first stream.</div>
+  </div></div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script type="module">
+import { api, el, qs } from '/common.js';
+
+async function load(){
+  const me = await api('/api/me',{method:'GET'}).catch(()=>({user:null}));
+  qs('#authBtn').textContent = me.user ? `@${me.user.username} (logout)` : 'Login';
+  qs('#authBtn').href = me.user ? '#' : '/login.html';
+  qs('#authBtn').onclick = async (e)=>{
+    if(!me.user) return;
+    e.preventDefault();
+    await api('/api/auth/logout',{method:'POST',body:JSON.stringify({})});
+    location.reload();
+  };
+
+  const data = await api('/api/streams/live',{method:'GET'});
+  qs('#liveCount').textContent = `LIVE: ${data.streams.length}`;
+  qs('#grid').innerHTML='';
+  qs('#empty').style.display = data.streams.length ? 'none' : 'block';
+
+  for(const s of data.streams){
+    const thumb = s.thumbnailPath
+      ? el('img',{src:s.thumbnailPath,style:"width:100%;aspect-ratio:16/9;object-fit:cover;display:block;"})
+      : el('div',{style:"width:100%;aspect-ratio:16/9;background:#0a0a12;display:grid;place-items:center;color:#777;"},["No thumbnail"]);
+    const card = el('a',{class:'card',href:`/watch.html?id=${s.id}`},[
+      thumb,
+      el('div',{class:'card-body'},[
+        el('div',{class:'badge live'},['LIVE']),
+        el('h3',{style:"margin:8px 0 4px;"},[s.title]),
+        el('div',{class:'muted small'},[`by ${s.creatorUsername} • ${s.viewerCount} watching`])
+      ])
+    ]);
+    qs('#grid').appendChild(card);
+  }
+}
+load();
+setInterval(load, 8000);
+</script>
+</body></html>

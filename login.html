@@ -1,0 +1,32 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Login • Primal Live</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div></div>
+  <a class="btn" href="/">Home</a>
+</div></div>
+<div class="container" style="max-width:520px;">
+  <h2>Login</h2>
+  <div class="card"><div class="card-body">
+    <label>Email</label><input class="input" id="email"/>
+    <div style="height:10px"></div>
+    <label>Password</label><input class="input" id="pw" type="password"/>
+    <div style="height:12px"></div>
+    <button class="btn primary" id="go">Login</button>
+    <div class="muted small" style="margin-top:10px;">No account? <a href="/register.html">Register</a></div>
+    <div id="err" class="muted small" style="margin-top:10px;"></div>
+  </div></div>
+</div>
+<script type="module">
+import { api, qs } from '/common.js';
+qs('#go').onclick = async ()=>{
+  qs('#err').textContent='';
+  try{
+    await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:qs('#email').value,password:qs('#pw').value})});
+    location.href='/';
+  }catch(e){ qs('#err').textContent=e.message; }
+}
+</script>
+</body></html>

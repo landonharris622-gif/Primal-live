@@ -1,0 +1,191 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Watch • Primal Live</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div></div>
+  <div class="row"><a class="btn" href="/">Home</a><a class="btn" href="/vods.html">VOD</a></div>
+</div></div>
+
+<div class="container">
+  <div class="row" style="align-items:center; justify-content:space-between;">
+    <div>
+      <h2 id="title" style="margin:0 0 6px;">Loading…</h2>
+      <div class="muted small" id="meta"></div>
+    </div>
+    <div class="row" style="align-items:center;">
+      <div class="badge live" id="liveBadge" style="display:none;">LIVE</div>
+      <div class="pill" id="viewers">0 watching</div>
+    </div>
+  </div>
+
+  <div class="video-wrap" style="margin-top:10px;">
+    <video id="main" autoplay playsinline controls></video>
+    <div class="pip" id="pipWrap" style="display:none;"><video id="pip" autoplay playsinline></video></div>
+  </div>
+
+  <div id="notice" class="card" style="margin-top:12px; display:none;"><div class="card-body" id="noticeText"></div></div>
+
+  <div class="row" style="margin-top:12px;">
+    <div class="card" style="flex:2; min-width:280px;">
+      <div class="card-body">
+        <h3 style="margin:0 0 10px;">Chat</h3>
+        <div id="chatBox" style="max-height:280px; overflow:auto; display:flex; flex-direction:column; gap:8px;"></div>
+        <div class="row" style="margin-top:10px;">
+          <input class="input" id="msg" placeholder="Type message…" style="flex:1;"/>
+          <button class="btn primary" id="send">Send</button>
+        </div>
+        <div class="muted small" id="chatHint" style="margin-top:8px;"></div>
+      </div>
+    </div>
+    <div class="card" style="flex:1; min-width:240px;">
+      <div class="card-body">
+        <h3 style="margin:0 0 10px;">About</h3>
+        <div class="muted" id="about"></div>
+        <hr class="sep"/>
+        <div class="muted small">If WebRTC can't connect on strict networks, deploy TURN (see turn-server).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { api, qs, el, sessionId } from '/common.js';
+
+const id = new URLSearchParams(location.search).get('id');
+let ws=null, myPeerId=null, creatorPeerId=null;
+let pc=null;
+let heartbeatTimer=null;
+
+function badgeEl(b){
+  if(!b) return null;
+  return el('span',{class:'badge '+(b==='ADMIN'?'admin':'creator'), style:'margin-left:6px;'},[b]);
+}
+function renderMsg(m){
+  const row = el('div',{},[ el('b',{},[m.usernameSnapshot || m.username || 'user']) ]);
+  if(m.badge) row.appendChild(badgeEl(m.badge));
+  row.appendChild(el('span',{class:'muted small', style:'margin-left:8px;'},[new Date(m.createdAt).toLocaleTimeString()]));
+  const wrap = el('div',{},[row, el('div',{},[m.message])]);
+  qs('#chatBox').appendChild(wrap);
+  qs('#chatBox').scrollTop = qs('#chatBox').scrollHeight;
+}
+
+async function load(){
+  const s = (await api(`/api/streams/${id}`,{method:'GET'})).stream;
+  qs('#title').textContent = s.title;
+  qs('#meta').textContent = `by ${s.creatorUsername} • ${s.ingestType==='RTMP'?'OBS (Mux)':'Browser WebRTC'}`;
+  qs('#about').textContent = s.ingestType==='RTMP' ? 'Delivered via Mux HLS.' : 'Peer-to-peer WebRTC.';
+  qs('#liveBadge').style.display = s.isLive ? 'inline-flex' : 'none';
+  qs('#notice').style.display = (!s.isLive) ? 'block' : 'none';
+  qs('#noticeText').textContent = s.isLive ? '' : 'This stream is currently offline.';
+
+  qs('#chatBox').innerHTML='';
+  const msgs = await api(`/api/chat/${id}`,{method:'GET'});
+  msgs.messages.forEach(renderMsg);
+
+  const me = (await api('/api/me',{method:'GET'})).user;
+  qs('#chatHint').textContent = me ? '' : 'Login to chat.';
+  qs('#send').onclick = async ()=>{
+    if(!me) return location.href='/login.html';
+    const t = qs('#msg').value.trim();
+    if(!t) return;
+    await api(`/api/chat/${id}/send`,{method:'POST', body: JSON.stringify({message:t})});
+    qs('#msg').value='';
+  };
+
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(async ()=>{
+    const r = await api(`/api/streams/${id}/heartbeat`,{method:'POST', body: JSON.stringify({sessionId: sessionId()})});
+    qs('#viewers').textContent = `${r.viewerCount} watching`;
+  }, 20000);
+  const r0 = await api(`/api/streams/${id}/heartbeat`,{method:'POST', body: JSON.stringify({sessionId: sessionId()})});
+  qs('#viewers').textContent = `${r0.viewerCount} watching`;
+
+  if(s.isLive && s.ingestType==='RTMP' && s.muxPlaybackId){
+    const url = `https://stream.mux.com/${s.muxPlaybackId}.m3u8`;
+    const v = qs('#main');
+    if(v.canPlayType('application/vnd.apple.mpegurl')) v.src = url;
+    else{
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+      script.onload = ()=>{
+        if(window.Hls && window.Hls.isSupported()){
+          const hls = new window.Hls();
+          hls.loadSource(url);
+          hls.attachMedia(v);
+        } else {
+          qs('#notice').style.display='block';
+          qs('#noticeText').textContent='HLS not supported.';
+        }
+      };
+      document.head.appendChild(script);
+    }
+  } else if (s.isLive && s.ingestType==='WEBRTC') {
+    startWebRTC();
+  }
+}
+
+function startWebRTC(){
+  if(ws) return; // already started
+  const proto = location.protocol==='https:'?'wss':'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+  ws.onopen = ()=> ws.send(JSON.stringify({ type:'join', room: id, peerId: null }));
+  ws.onmessage = async (evt)=>{
+    const msg = JSON.parse(evt.data);
+    if(msg.type==='joined'){ myPeerId = msg.peerId; return; }
+    if(msg.type==='peer-joined'){
+      if(msg.peerId !== myPeerId && !creatorPeerId) creatorPeerId = msg.peerId;
+      return;
+    }
+    if(msg.type==='answer' && msg.to===myPeerId){
+      await pc.setRemoteDescription(msg.answer);
+    }
+    if(msg.type==='ice' && msg.to===myPeerId){
+      await pc.addIceCandidate(msg.candidate);
+    }
+    if(msg.type==='stream-ended' && msg.streamId===id){
+      cleanupWebRTC();
+      qs('#notice').style.display='block';
+      qs('#noticeText').textContent='This stream has ended.';
+    }
+    if(msg.type==='chat'){
+      renderMsg({ usernameSnapshot: msg.username, message: msg.message, createdAt: msg.createdAt, badge: msg.badge });
+    }
+  };
+
+  pc = new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] });
+  const remote = new MediaStream();
+  pc.ontrack = (e)=>{
+    remote.addTrack(e.track);
+    qs('#main').srcObject = remote;
+  };
+  pc.onicecandidate = (e)=>{
+    if(e.candidate && ws && myPeerId && creatorPeerId){
+      ws.send(JSON.stringify({ room:id, type:'ice', from: myPeerId, to: creatorPeerId, candidate: e.candidate }));
+    }
+  };
+
+  setTimeout(async ()=>{
+    if(!creatorPeerId){
+      qs('#notice').style.display='block';
+      qs('#noticeText').textContent='Waiting for creator...';
+      return;
+    }
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ room:id, type:'offer', from: myPeerId, to: creatorPeerId, offer }));
+  }, 700);
+}
+
+function cleanupWebRTC(){
+  try{ if(ws) ws.close(); }catch{}
+  try{ if(pc) pc.close(); }catch{}
+  ws=null; pc=null; myPeerId=null; creatorPeerId=null;
+  qs('#main').srcObject=null;
+}
+
+load();
+setInterval(load, 12000);
+</script>
+</body></html>

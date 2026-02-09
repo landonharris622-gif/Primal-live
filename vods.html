@@ -1,0 +1,33 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>VOD • Primal Live</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div></div>
+  <div class="row"><a class="btn" href="/">Home</a></div>
+</div></div>
+<div class="container">
+  <h2>VODs</h2>
+  <div class="grid" id="grid"></div>
+</div>
+<script type="module">
+import { api, el, qs } from '/common.js';
+async function load(){
+  const data = await api('/api/vods', { method:'GET' });
+  qs('#grid').innerHTML='';
+  for(const v of data.vods){
+    const card = el('div',{class:'card'},[
+      el('div',{class:'card-body'},[
+        el('h3',{style:'margin:0 0 6px;'},[v.title]),
+        el('div',{class:'muted small'},[`by ${v.creatorUsername} • ${new Date(v.createdAt).toLocaleString()}`]),
+        el('div',{style:'height:10px'}),
+        el('video',{src:v.filePath, controls:'', style:'width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.08);'})
+      ])
+    ]);
+    qs('#grid').appendChild(card);
+  }
+}
+load();
+</script>
+</body></html>

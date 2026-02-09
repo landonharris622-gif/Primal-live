@@ -1,0 +1,249 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Creator • Primal Live</title>
+<link rel="stylesheet" href="/app.css"/>
+</head><body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="brand"><div class="logo">🦍</div><div>Primal Live</div></div>
+  <div class="row"><a class="btn" href="/">Home</a><a class="btn" href="/vods.html">VOD</a></div>
+</div></div>
+
+<div class="container">
+  <h2>Creator Dashboard</h2>
+  <div id="gate" class="card" style="display:none;"><div class="card-body">
+    <h3 style="margin:0 0 6px;">Creator access required</h3>
+    <div class="muted">Ask an admin to promote your account to CREATOR.</div>
+  </div></div>
+
+  <div id="ui" style="display:none;">
+    <div class="card"><div class="card-body">
+      <div class="row" style="align-items:end;">
+        <div style="flex:1;">
+          <label>Stream Title</label>
+          <input class="input" id="title" placeholder="My stream"/>
+        </div>
+        <button class="btn primary" id="create">Create Stream</button>
+      </div>
+      <div class="muted small" id="streamInfo" style="margin-top:10px;"></div>
+      <hr class="sep"/>
+      <div class="row">
+        <div style="flex:1;">
+          <label>Thumbnail</label>
+          <input class="input" id="thumb" type="file" accept="image/*" disabled/>
+          <div class="muted small" id="thumbStatus" style="margin-top:6px;"></div>
+        </div>
+        <div style="flex:1;">
+          <label>Live Controls</label>
+          <div class="row">
+            <button class="btn" id="share">Share Screen</button>
+            <button class="btn" id="cam">Camera (optional)</button>
+            <button class="btn primary" id="live" disabled>Go Live</button>
+            <button class="btn danger" id="end" disabled>End Stream</button>
+          </div>
+          <div class="muted small" id="deviceStatus" style="margin-top:6px;"></div>
+        </div>
+      </div>
+      <hr class="sep"/>
+      <div class="row">
+        <div style="flex:1;">
+          <label>OBS (Mux RTMP) - Optional</label>
+          <div class="muted small">Requires MUX_TOKEN_ID + MUX_TOKEN_SECRET env vars.</div>
+          <button class="btn" id="mux" disabled>Create Mux RTMP</button>
+          <div class="muted small" id="muxOut" style="margin-top:6px;"></div>
+        </div>
+        <div style="flex:1;">
+          <label>Recording (VOD)</label>
+          <div class="muted small">Records in browser, uploads on End Stream.</div>
+          <div class="muted small" id="recOut" style="margin-top:6px;"></div>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="video-wrap" style="margin-top:12px;">
+      <video id="preview" autoplay playsinline muted></video>
+      <div class="pip" style="display:none;" id="pipWrap"><video id="pip" autoplay playsinline muted></video></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { api, qs } from '/common.js';
+
+let me=null, streamId=null;
+let screenStream=null, camStream=null, micStream=null;
+let ws=null, myPeerId=null;
+let pcs = new Map(); // viewerPeerId -> RTCPeerConnection
+let recorder=null; let chunks=[];
+
+async function init(){
+  me = (await api('/api/me',{method:'GET'})).user;
+  if(!me){ location.href='/login.html'; return; }
+  if(!(me.role==='CREATOR' || me.role==='ADMIN')){
+    qs('#gate').style.display='block'; return;
+  }
+  qs('#ui').style.display='block';
+
+  qs('#create').onclick = async ()=>{
+    const title = qs('#title').value.trim() || 'Untitled Stream';
+    const r = await api('/api/streams/create',{method:'POST', body: JSON.stringify({title})});
+    streamId = r.id;
+    qs('#streamInfo').textContent = `Stream created. ID: ${streamId}. Watch: /watch.html?id=${streamId}`;
+    qs('#thumb').disabled=false;
+    qs('#mux').disabled=false;
+    updateGoLive();
+  };
+
+  qs('#thumb').onchange = async ()=>{
+    if(!streamId) return alert('Create a stream first');
+    const f = qs('#thumb').files[0];
+    if(!f) return;
+    const fd = new FormData();
+    fd.append('thumbnail', f);
+    const res = await fetch(`/api/streams/${streamId}/thumbnail`, { method:'POST', body: fd, credentials:'include' });
+    const j = await res.json();
+    qs('#thumbStatus').textContent = res.ok ? 'Thumbnail saved.' : (j.error||'upload failed');
+  };
+
+  qs('#share').onclick = async ()=>{
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:false });
+    qs('#preview').srcObject = screenStream;
+    updateGoLive();
+  };
+
+  qs('#cam').onclick = async ()=>{
+    if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; qs('#pipWrap').style.display='none'; updateGoLive(); return; }
+    camStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+    qs('#pip').srcObject = camStream;
+    qs('#pipWrap').style.display='block';
+    updateGoLive();
+  };
+
+  qs('#live').onclick = async ()=>{
+    if(!streamId) return alert('Create a stream first');
+    if(!screenStream) return alert('Share your screen first');
+    micStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+
+    // recording (screen + mic)
+    try{
+      const recStream = new MediaStream([ ...screenStream.getVideoTracks(), ...micStream.getAudioTracks() ]);
+      recorder = new MediaRecorder(recStream, { mimeType:'video/webm;codecs=vp8,opus' });
+      chunks=[];
+      recorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
+      recorder.start(1000);
+      qs('#recOut').textContent='Recording started (uploads on End Stream).';
+    }catch(e){
+      recorder=null;
+      qs('#recOut').textContent='Recording not supported in this browser.';
+    }
+
+    await api(`/api/streams/${streamId}/start`, { method:'POST', body: JSON.stringify({}) });
+    qs('#live').disabled=true;
+    qs('#end').disabled=false;
+    qs('#deviceStatus').textContent='LIVE.';
+
+    connectWS();
+  };
+
+  qs('#end').onclick = async ()=>{
+    if(!streamId) return;
+    if(!confirm('End stream?')) return;
+
+    // stop recording + upload
+    if(recorder){
+      await new Promise((resolve)=>{ recorder.onstop=resolve; recorder.stop(); });
+      const blob = new Blob(chunks, { type:'video/webm' });
+      const fd = new FormData();
+      fd.append('vod', blob, 'vod.webm');
+      fd.append('streamId', streamId);
+      fd.append('title', (qs('#title').value.trim() || 'Stream VOD'));
+      const res = await fetch('/api/vods/upload', { method:'POST', body: fd, credentials:'include' });
+      const j = await res.json();
+      qs('#recOut').textContent = res.ok ? 'VOD uploaded! See VOD page.' : (j.error||'VOD upload failed');
+    }
+
+    await api(`/api/streams/${streamId}/end`, { method:'POST', body: JSON.stringify({}) });
+    stopAllMedia();
+    closeAllPCs();
+    if(ws) ws.close();
+    ws=null; myPeerId=null;
+
+    qs('#live').disabled=false;
+    qs('#end').disabled=true;
+    qs('#deviceStatus').textContent='OFFLINE.';
+    updateGoLive();
+  };
+
+  qs('#mux').onclick = async ()=>{
+    if(!streamId) return alert('Create a stream first');
+    qs('#muxOut').textContent='Creating Mux stream...';
+    try{
+      const r = await api('/api/mux/create', { method:'POST', body: JSON.stringify({ streamId }) });
+      qs('#muxOut').innerHTML = `RTMP URL: <code>${r.rtmpUrl}</code><br>Stream Key: <code>${r.streamKey}</code><br>Playback ID: <code>${r.playbackId}</code>`;
+    }catch(e){
+      qs('#muxOut').textContent = `Mux not configured: ${e.message}`;
+    }
+  };
+}
+
+function updateGoLive(){
+  qs('#live').disabled = !(streamId && screenStream);
+}
+function stopAllMedia(){
+  [screenStream, camStream, micStream].forEach(s=>{ if(s) s.getTracks().forEach(t=>t.stop()); });
+  screenStream=null; camStream=null; micStream=null;
+  qs('#preview').srcObject=null;
+  qs('#pip').srcObject=null;
+  qs('#pipWrap').style.display='none';
+}
+function closeAllPCs(){
+  for(const pc of pcs.values()){ try{ pc.close(); }catch{} }
+  pcs.clear();
+}
+function connectWS(){
+  ws = new WebSocket((location.protocol==='https:'?'wss':'ws') + '://' + location.host);
+  ws.onopen = ()=> ws.send(JSON.stringify({ type:'join', room: streamId, peerId: null }));
+  ws.onmessage = async (evt)=>{
+    const msg = JSON.parse(evt.data);
+    if(msg.type==='joined'){ myPeerId = msg.peerId; return; }
+
+    // viewer sends offer to creator -> creator answers
+    if(msg.type==='offer' && msg.to===myPeerId){
+      const viewerId = msg.from;
+      const pc = makePC(viewerId);
+      await pc.setRemoteDescription(msg.offer);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      ws.send(JSON.stringify({ room: streamId, type:'answer', from: myPeerId, to: viewerId, answer: ans }));
+      return;
+    }
+    if(msg.type==='ice' && msg.to===myPeerId){
+      const pc = pcs.get(msg.from);
+      if(pc) await pc.addIceCandidate(msg.candidate);
+    }
+  };
+}
+function makePC(viewerId){
+  const pc = new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] });
+  pcs.set(viewerId, pc);
+
+  // add tracks
+  const tracks = [];
+  if(screenStream) tracks.push(...screenStream.getTracks());
+  if(micStream) tracks.push(...micStream.getTracks());
+  if(camStream) tracks.push(...camStream.getVideoTracks());
+  tracks.forEach(t=> pc.addTrack(t, t.kind==='video' ? (screenStream||camStream) : micStream));
+
+  pc.onicecandidate = (e)=>{
+    if(e.candidate && ws && myPeerId){
+      ws.send(JSON.stringify({ room: streamId, type:'ice', from: myPeerId, to: viewerId, candidate: e.candidate }));
+    }
+  };
+  pc.onconnectionstatechange = ()=>{
+    if(['failed','closed','disconnected'].includes(pc.connectionState)) pcs.delete(viewerId);
+  };
+  return pc;
+}
+
+init();
+</script>
+</body></html>
