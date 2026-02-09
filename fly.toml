@@ -1,0 +1,13 @@
+app = "primal-live-full"
+
+[env]
+  PORT = "3000"
+  SESSION_SECRET = "change-me"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  [[services.ports]]
+    port = 80
+  [[services.ports]]
+    port = 443

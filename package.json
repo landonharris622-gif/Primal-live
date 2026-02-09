@@ -1,0 +1,19 @@
+{
+  "name": "primal-live",
+  "version": "3.0.1",
+  "description": "Primal Live - Full stack WebRTC + VOD + Admin + optional Mux + TURN (Fly.io ready)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-sqlite3": "^0.9.0",
+    "express": "^4.19.2",
+    "express-session": "^1.17.3",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7",
+    "uuid": "^9.0.1",
+    "ws": "^8.16.0"
+  }
+}
